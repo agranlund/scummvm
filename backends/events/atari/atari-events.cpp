@@ -25,6 +25,7 @@
 
 #include <mint/osbind.h>
 
+#ifndef ATARI_RAVEN
 #include "backends/graphics/atari/atari-graphics.h"
 #else
 #include "backends/graphics/atari/atari-nova.h"
