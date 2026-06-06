@@ -26,6 +26,9 @@
 #include <mint/osbind.h>
 
 #include "backends/graphics/atari/atari-graphics.h"
+#else
+#include "backends/graphics/atari/atari-nova.h"
+#endif
 #include "backends/platform/atari/osystem_atari.h"
 #include "common/rect.h"
 

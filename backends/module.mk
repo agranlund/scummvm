@@ -428,14 +428,9 @@ MODULE_OBJS += \
 	fs/atari/atari-fs.o \
 	fs/atari/atari-fs-factory.o \
 	graphics/atari/atari-c2p-asm.o \
-	graphics/atari/atari-cursor.o \
-	graphics/atari/atari-graphics.o \
 	graphics/atari/atari-graphics-asm.o \
-	graphics/atari/atari-pendingscreenchanges.o \
-	graphics/atari/atari-screen.o \
-	graphics/atari/atari-supervidel.o \
-	graphics/atari/atari-surface.o \
-	mixer/atari/atari-mixer.o
+	graphics/atari/atari-nova.o \
+	mixer/null/null-mixer.o
 ifdef USE_ELF_LOADER
 MODULE_OBJS += \
 	plugins/atari/atari-provider.o

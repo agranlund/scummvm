@@ -45,9 +45,14 @@
 #include "backends/audiocd/atari/atari-audiocd.h"
 #include "backends/events/atari/atari-events.h"
 #include "backends/events/default/default-events.h"
+#ifndef ATARI_RAVEN
 #include "backends/graphics/atari/atari-graphics.h"
-#include "backends/keymapper/hardware-input.h"
 #include "backends/mixer/atari/atari-mixer.h"
+#else
+#include "backends/graphics/atari/atari-nova.h"
+#include "backends/mixer/null/null-mixer.h"
+#endif
+#include "backends/keymapper/hardware-input.h"
 #include "backends/mutex/null/null-mutex.h"
 #ifdef DYNAMIC_MODULES
 #include "backends/plugins/atari/atari-provider.h"
@@ -155,10 +160,12 @@ static void critical_restore() {
 	// avoid infinite recursion if either of the shutdown procedures fails
 	(void)Setexc(VEC_PROCTERM, s_old_procterm);
 
+#ifndef ATARI_RAVEN	
 	extern void AtariAudioShutdown();
-	extern void AtariGraphicsShutdown();
-
 	AtariAudioShutdown();
+#endif
+
+	extern void AtariGraphicsShutdown();
 	AtariGraphicsShutdown();
 }
 
@@ -190,11 +197,12 @@ OSystem_Atari::OSystem_Atari() {
 	Getcookie(C__VDO, &vdo);
 	vdo >>= 16;
 
+#ifndef ATARI_RAVEN
 	if (vdo != VDO_TT && vdo != VDO_FALCON) {
 		fprintf(stderr, "ScummVM requires Atari TT/Falcon compatible video\n");
 		exit(EXIT_FAILURE);
 	}
-
+#endif
 	enum {
 		MCH_ST = 0,
 		MCH_STE,
@@ -212,6 +220,13 @@ OSystem_Atari::OSystem_Atari() {
 		fprintf(stderr, "Disable fVDI, ScummVM uses XBIOS video calls\n");
 		exit(EXIT_FAILURE);
 	}
+
+#ifdef ATARI_RAVEN	
+	Bconmap(7);		// aux = com2
+	Fforce(1, -2);	// stdout -> aux
+	Fforce(2, -2);	// stderr -> aux
+	Cursconf(0, 0);	// no cursor
+#endif	
 
 #ifdef INPUT_ACTIVE
 	_KBDVECS *kbdvecs = Kbdvbase();
@@ -328,7 +343,11 @@ void OSystem_Atari::initBackend() {
 	_eventManager = new DefaultEventManager(makeKeyboardRepeatingEventSource(atariEventSource));
 
 	// AtariGraphicsManager needs _eventManager ready
+#ifndef ATARI_RAVEN
 	AtariGraphicsManager *atariGraphicsManager = new AtariGraphicsManager();
+#else
+	AtariGraphicsManager *atariGraphicsManager = new AtariCtpciManager();
+#endif	
 	_graphicsManager = atariGraphicsManager;
 
 	atariEventSource->setGraphicsManager(atariGraphicsManager);
@@ -357,8 +376,14 @@ void OSystem_Atari::initBackend() {
 		ConfMan.setInt("autosave_period", 0);
 	}
 
+#ifndef ATARI_RAVEN
 	// init() will be called upon starting a new game
 	_mixerManager = new AtariMixerManager();
+#else
+	// init needs to be called immediately for the null mixer
+	_mixerManager = new NullMixerManager();	
+	_mixerManager->init();
+#endif	
 
 	_audiocdManager = new AtariAudioCDManager();
 
@@ -368,7 +393,9 @@ void OSystem_Atari::initBackend() {
 void OSystem_Atari::engineBeforeCreate() {
 	debug("engineBeforeCreate");
 
+#ifndef ATARI_RAVEN
 	((AtariMixerManager *)_mixerManager)->init();
+#endif
 }
 
 void OSystem_Atari::engineInit() {
@@ -386,7 +413,9 @@ void OSystem_Atari::engineDone() {
 void OSystem_Atari::engineAfterDelete() {
 	debug("engineAfterDelete");
 
+#ifndef ATARI_RAVEN
 	((AtariMixerManager *)_mixerManager)->deinit();
+#endif	
 }
 
 Common::MutexInternal *OSystem_Atari::createMutex() {
@@ -539,7 +568,11 @@ void OSystem_Atari::update() {
 			activeDomain->getValOrDefault("gameid").c_str());
 	}
 
+#ifndef ATARI_RAVEN
 	((AtariMixerManager *)_mixerManager)->update();
+#else
+	((NullMixerManager *)_mixerManager)->update();
+#endif	
 }
 
 OSystem *OSystem_Atari_create() {
