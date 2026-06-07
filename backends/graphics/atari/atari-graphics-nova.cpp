@@ -21,15 +21,16 @@
 
 #define FORCE_TEXT_CONSOLE
 
-#define FORBIDDEN_SYMBOL_EXCEPTION_FILE // atari-graphics.h's unordered_set
+#define FORBIDDEN_SYMBOL_ALLOW_ALL
 
 #include "backends/platform/atari/dlmalloc.h"
-#include "backends/graphics/atari/atari-nova.h"
+#include "backends/graphics/atari/atari-graphics-nova.h"
 
 #include <mint/cookie.h>
 #include <mint/falcon.h>
 #include <mint/osbind.h>
 #include <mint/sysvars.h>
+#include <gem.h>
 
 #include "backends/keymapper/action.h"
 #include "backends/keymapper/keymap.h"
@@ -43,6 +44,101 @@
 #include "gui/ThemeEngine.h"
 
 //#define SCREEN_ACTIVE
+
+static nova_xcb_t* s_nova_xcb;
+static nova_bibres_t s_oldRes;
+static nova_bibres_t s_res200;
+
+static uint16_t s_oldpalsize = 0;
+static uint16 s_oldpal[256*3];
+static _RGB s_novapal[256];
+
+
+static int initNovaModes() {
+	if ((Getcookie(C_NOVA, (long*)&s_nova_xcb) != C_FOUND) || !s_nova_xcb) {
+		warning("Nova cookie not found");
+		return 0;
+	}
+	if (s_nova_xcb->version != NOVA_VERSION) {
+		warning("Nova version invalid %08x / %08x", s_nova_xcb->version, (uint32_t)NOVA_VERSION);
+		return 0;
+	}
+
+	char filename[32];
+    strcpy(filename, "c:\\auto\\sta_vdi.bib");
+	{
+		long oldssp = Super(SUP_SET);
+    	filename[0] = 'a'+ *((volatile unsigned short *)0x446);
+		Super((void *)oldssp);		
+	}
+
+	FILE* f = fopen(filename, "rb");
+	if (!f) {
+		warning("Nova bib not found");
+		return 0;
+	}
+
+	fseek(f, 0, SEEK_END);
+	unsigned int fsize = (int)ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	for (int fpos = 0, m = 0; (fpos + sizeof(nova_bibres_t)) <= fsize; fpos += sizeof(nova_bibres_t), m++)
+	{
+		nova_bibres_t res;
+		fread(&res, 1, sizeof(nova_bibres_t), f);
+        if (m == s_nova_xcb->resolution) {
+            memcpy(&s_oldRes, &res, sizeof(nova_bibres_t));
+			debug(" nova: %dx%d %dbpp (desktop)", res.real_x+1, res.real_y+1, res.planes);
+        } else {
+			debug(" nova: %dx%d %dbpp", res.real_x+1, res.real_y+1, res.planes);
+		}
+		if (res.planes == 8) {
+			if ((res.real_x == 319) && (res.real_y == 199)) {
+				memcpy(&s_res200, &res, sizeof(nova_bibres_t));
+			}
+		}
+	}
+
+	fclose(f);
+	return (s_res200.real_x) ? 1 : 0;
+}
+
+static void setNovaMode(nova_bibres_t* res) {
+	long oldssp = Super(SUP_SET);
+    __asm__ __volatile__ (
+            "moveql	#0,%%d0\n\t"
+            "movel	%0,%%a0\n\t"
+            "movel	%1,%%a1\n\t"
+            "jsr	%%a1@\n\t"
+			"movel	%2,%%a0\n\t"
+			"jsr	%%a0@\n\t"
+        : : "g"(res), "g"(s_nova_xcb->p_changeres), "g"(s_nova_xcb->p_vsync)
+        : "d0", "d1", "d2", "a0", "a1", "a2", "cc", "memory"
+    );
+	Super((void *)oldssp);		
+}
+
+static void setNovaPalette(int start, int count, _RGB* pal) {
+	long oldssp = Super(SUP_SET);
+	for (int i=start; i<(start+count) && (i < 256); i++, pal++) {
+		uint32_t* ps = (uint32_t*)pal;
+		uint32_t* pd = (uint32_t*)&s_novapal[i];
+		if (*ps != *pd) {
+			*pd = *ps;
+			char* colors = &pal->red;
+			__asm__ __volatile__ (
+					"movel	%0,%%d0\n\t"
+					"movel	%1,%%a0\n\t"
+					"movel	%2,%%a1\n\t"
+					"jsr	%%a1@"
+				: : "g"(i), "g"(colors), "g"(s_nova_xcb->p_setcolor)
+				: "d0", "d1", "d2", "a0", "a1", "a2", "cc", "memory"
+			);
+		}
+	}
+	Super((void *)oldssp);		
+}
+
 
 #define MAX_HZ_SHAKE 16 // Falcon only
 #define MAX_V_SHAKE  16
@@ -119,18 +215,21 @@ static uint32 UninstallVblHandler() {
 void AtariGraphicsShutdown() {
 	debug("AtariGraphicsShutdown");
 	Supexec(UninstallVblHandler);
-#if 0
-	if (s_oldRez != -1) {
-		Setscreen(SCR_NOCHANGE, s_oldPhysbase, s_oldRez);
-	} else if (s_oldMode != -1) {
-		// prevent setting video base address just on the VDB line
-		Vsync();
-		if (hasSuperVidel())
-			VsetMode(SVEXT | SVEXT_BASERES(0) | COL80 | BPS8C);	// resync to proper 640x480
-		VsetMode(s_oldMode);
-		VsetScreen(SCR_NOCHANGE, s_oldPhysbase, SCR_NOCHANGE, SCR_NOCHANGE);
+
+	// restore video mode
+	if (s_oldRes.real_x) {
+		setNovaMode(&s_oldRes);
+		memset(&s_oldRes, 0, sizeof(nova_bibres_t));
 	}
-#endif	
+
+	// restore palette
+	if (s_oldpalsize) {
+		int16_t dummy; int16_t vdiHandlep = graf_handle(&dummy, &dummy, &dummy, &dummy);
+		for (uint16 i = 0; i < s_oldpalsize; i++) {
+			vs_color(vdiHandlep, i, (int16_t*)&s_oldpal[i * 3]);
+		}
+		s_oldpalsize = 0;
+	}
 }
 
 AtariGraphicsManager::AtariGraphicsManager() {
@@ -157,6 +256,17 @@ AtariGraphicsManager::AtariGraphicsManager() {
 
 	ConfMan.flushToDisk();
 
+	if (initNovaModes() < 1) {
+		error("No valid Nova gfxmodes");
+	}
+
+	// backup palette
+	int16_t dummy; int16_t vdiHandlep = graf_handle(&dummy, &dummy, &dummy, &dummy);
+    s_oldpalsize = ((vdiHandlep >= 0) && (s_nova_xcb->planes <= 8)) ? (1 << s_nova_xcb->planes) : 0;
+    for (uint16_t i = 0; i < s_oldpalsize; i++) {
+        vq_color(vdiHandlep, i, 1, (int16_t*)&s_oldpal[i * 3]);
+    }
+
 	// Generate RGB332/RGB121 palette for the overlay
 	const Graphics::PixelFormat &format = getOverlayFormat();
 	const int paletteSize = getOverlayPaletteSize();
@@ -170,6 +280,13 @@ AtariGraphicsManager::AtariGraphicsManager() {
 
 	if (!Supexec(InstallVblHandler)) {
 		error("VBL handler was not installed");
+	}
+
+	setNovaMode(&s_res200);
+	memset(s_novapal, 0xff, sizeof(_RGB) * 256);
+	for (int i=0; i<256; i++) {
+		uint32_t black = 0;
+		setNovaPalette(i, 1, (_RGB*)&black);
 	}
 
 	g_system->getEventManager()->getEventDispatcher()->registerObserver(this, 10, false);
@@ -310,7 +427,7 @@ OSystem::TransactionError AtariGraphicsManager::endGFXTransaction() {
 }
 
 void AtariGraphicsManager::setPalette(const byte *colors, uint start, uint num) {
-	debug("setPalette: %d, %d", start, num);
+	//debug("setPalette: %d, %d", start, num);
 	_RGB *pal = &_palette.falcon[start];
 	for (uint i = 0; i < num; ++i) {
 		pal[i].red   = colors[i * 3 + 0];
@@ -321,7 +438,7 @@ void AtariGraphicsManager::setPalette(const byte *colors, uint start, uint num) 
 }
 
 void AtariGraphicsManager::grabPalette(byte *colors, uint start, uint num) const {
-	debug("grabPalette: %d, %d", start, num);
+	//debug("grabPalette: %d, %d", start, num);
 	const _RGB *pal = &_palette.falcon[start];
 	for (uint i = 0; i < num; ++i) {
 		*colors++ = pal[i].red;
@@ -331,7 +448,7 @@ void AtariGraphicsManager::grabPalette(byte *colors, uint start, uint num) const
 }
 
 void AtariGraphicsManager::copyRectToScreen(const void *buf, int pitch, int x, int y, int w, int h) {
-	debug("copyRectToScreen: %d, %d, %d(%d), %d", x, y, w, pitch, h);
+	//debug("copyRectToScreen: %d, %d, %d(%d), %d", x, y, w, pitch, h);
 
 	copyRectToScreenInternal(buf, pitch, x, y, w, h,
 		PIXELFORMAT_CLUT8,
@@ -414,6 +531,14 @@ void AtariGraphicsManager::updateScreen() {
 	}
 
 	_workScreen->clearDirtyRects();
+
+	if (_pendingScreenChange & kPendingScreenChangePalette) {
+		int num = isOverlayVisible() ? getOverlayPaletteSize() : 256;
+		setNovaPalette(0, isOverlayVisible() ? getOverlayPaletteSize() : 256, _workScreen->palette->falcon);
+	}
+
+	_pendingScreenChange = kPendingScreenChangeNone;
+
 
 #ifdef SCREEN_ACTIVE
 	// first change video mode so we can modify video regs later
@@ -910,12 +1035,13 @@ bool AtariGraphicsManager::updateScreenInternal(const Graphics::Surface &srcSurf
 		if (directRendering)
 			_workScreen->storeBackground(_cursor.dstRect);
 
-		// don't use _cursor.srcRect for width as this must be aligned first
-		// (_cursor.surface.w is recalculated thanks to _cursor.isClipped())
-		drawMaskedSprite(
-			*dstSurface, _cursor.surface, _cursor.surfaceMask,
-			_cursor.dstRect.left, _cursor.dstRect.top,
-			Common::Rect(0, _cursor.srcRect.top, _cursor.surface.w, _cursor.srcRect.bottom));
+		dstSurface->copyRectToSurfaceWithKey(
+			_cursor.surface,
+			_cursor.dstRect.left,
+			_cursor.dstRect.top,
+			Common::Rect(0, _cursor.srcRect.top, _cursor.surface.w, _cursor.srcRect.bottom),
+			0
+		);
 
 		cursorPositionChanged = cursorSurfaceChanged = false;
 		oldCursorRect = _cursor.dstRect;
@@ -1216,4 +1342,6 @@ void Surface::free() {
 	format = PixelFormat();
 }
 };
+
+
 

@@ -19,10 +19,11 @@
  *
  */
 
-#ifndef BACKENDS_GRAPHICS_ATARI_H
-#define BACKENDS_GRAPHICS_ATARI_H
+#ifndef BACKENDS_GRAPHICS_ATARI_NOVA_H
+#define BACKENDS_GRAPHICS_ATARI_NOVA_H
 
 #include "backends/graphics/graphics.h"
+#include "backends/platform/atari/nova.h"
 #include "common/events.h"
 
 #include <mint/osbind.h>
@@ -36,7 +37,6 @@
 
 constexpr Graphics::PixelFormat PIXELFORMAT_CLUT8  = Graphics::PixelFormat::createFormatCLUT8();
 constexpr Graphics::PixelFormat PIXELFORMAT_RGB332 = Graphics::PixelFormat(1, 3, 3, 2, 0, 5, 2, 0, 0);
-constexpr Graphics::PixelFormat PIXELFORMAT_RGB121 = Graphics::PixelFormat(1, 1, 2, 1, 0, 3, 1, 0, 0);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -46,8 +46,6 @@ struct std::hash<Common::Rect> {
 		return 31 * (31 * (31 * rect.left + rect.top) + rect.right) + rect.bottom;
 	}
 };
-
-
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -96,6 +94,7 @@ public:
 	int16 getOverlayWidth() const override { return 320; /*640;*/ }
 	int16 getOverlayHeight() const override { return 200; /*480;*/ }
 	Graphics::PixelFormat getOverlayFormat() const override { return PIXELFORMAT_RGB332; }
+
 	void showOverlay(bool inGUI) override;
 	void hideOverlay() override;
 	bool isOverlayVisible() const override { return _overlayVisible; }
@@ -143,6 +142,7 @@ protected:
 	GraphicsState _pendingState{ (GraphicsMode)getDefaultGraphicsMode() };
 
 private:
+
 	using DirtyRects = std::unordered_set<Common::Rect>;
 
 	enum CustomEventAction {
@@ -164,20 +164,13 @@ private:
 	template <bool directRendering>
 	bool updateScreenInternal(const Graphics::Surface &srcSurface);
 
-	void copyRectToScreenInternal(const void *buf, int pitch, int x, int y, int w, int h,
-								  const Graphics::PixelFormat &format, bool directRendering, bool tripleBuffer);
+	void copyRectToScreenInternal(const void *buf, int pitch, int x, int y, int w, int h, const Graphics::PixelFormat &format, bool directRendering, bool tripleBuffer);
 
 	bool isOverlayDirectRendering() const;
 
-	virtual void copyRectToSurface(Graphics::Surface &dstSurface, const Graphics::Surface &srcSurface,
-								   int destX, int destY,
-								   const Common::Rect &subRect) const {
+	virtual void copyRectToSurface(Graphics::Surface &dstSurface, const Graphics::Surface &srcSurface, int destX, int destY, const Common::Rect &subRect) const {
 		dstSurface.copyRectToSurface(srcSurface, destX, destY, subRect);
 	}
-
-	virtual void drawMaskedSprite(Graphics::Surface &dstSurface, const Graphics::Surface &srcSurface, const Graphics::Surface &srcMask,
-								  int destX, int destY,
-								  const Common::Rect &subRect) = 0;
 
 	void cursorPositionChanged() {
 		_screen[_overlayVisible ? OVERLAY_BUFFER : FRONT_BUFFER]->cursorPositionChanged = true;
@@ -191,13 +184,7 @@ private:
 		_screen[_overlayVisible ? OVERLAY_BUFFER : FRONT_BUFFER]->cursorVisibilityChanged = true;
 	}
 
-	int getOverlayPaletteSize() const {
-#ifndef DISABLE_FANCY_THEMES
-		return 256;
-#else
-		return 16;
-#endif
-	}
+	int getOverlayPaletteSize() const { return 256; }
 
 	bool _aspectRatioCorrection = false;
 	bool _oldAspectRatioCorrection = false;
@@ -237,9 +224,7 @@ private:
 		~Screen();
 
 		void reset(int width, int height);
-		// must be called before any rectangle drawing
 		void addDirtyRect(const Graphics::Surface &srcSurface, const Common::Rect &rect, bool directRendering);
-
 		void clearDirtyRects() {
 			dirtyRects.clear();
 			fullRedraw = false;
@@ -267,22 +252,17 @@ private:
 		int oldOffsettedSurfaceHeight = -1;
 
 	private:
-		static constexpr size_t ALIGN = 16;	// 16 bytes
-
 		const AtariGraphicsManager *_manager;
-
 		Graphics::Surface _offsettedSurf;
-		// used by direct rendering
 		Graphics::Surface _cursorBackgroundSurf;
 	};
+
 	Screen *_screen[BUFFER_COUNT] = {};
 	Screen *_workScreen = nullptr;
 	Screen *_oldWorkScreen = nullptr;	// used in hideOverlay()
-
 	Graphics::Surface _chunkySurface;
-
-	bool _overlayVisible = false;
 	Graphics::Surface _overlaySurface;
+	bool _overlayVisible = false;
 
 	struct Cursor {
 		void update(const Graphics::Surface &screen, bool isModified);
@@ -309,15 +289,13 @@ private:
 
 		// surface
 		void setSurface(const void *buf, int w, int h, int hotspotX, int hotspotY, uint32 keycolor);
-		template <bool isClut8>
-		void convertTo(const Graphics::PixelFormat &format);
+		template <bool isClut8> void convertTo(const Graphics::PixelFormat &format);
+
 		Graphics::Surface surface;
 		Graphics::Surface surfaceMask;
 
 		// rects (valid only if !outOfScreen)
-		bool isClipped() const {
-			return outOfScreen ? false : _width != srcRect.width();
-		}
+		bool isClipped() const { return outOfScreen ? false : _width != srcRect.width(); }
 		bool outOfScreen = true;
 		Common::Rect srcRect;
 		Common::Rect dstRect;
@@ -345,60 +323,5 @@ private:
 	Palette _palette;
 	Palette _overlayPalette;
 };
-
-///////////////////////////////////
-
-class AtariCtpciManager : public AtariGraphicsManager {
-public:
-	AtariCtpciManager() : AtariGraphicsManager() {
-	}
-
-	~AtariCtpciManager() {
-	}
-
-private:
-	void drawMaskedSprite(Graphics::Surface &dstSurface, const Graphics::Surface &srcSurface, const Graphics::Surface &srcMask,
-						  int destX, int destY,
-						  const Common::Rect &subRect) override {
-		assert(subRect.width() % 16 == 0);
-		assert(subRect.width() == srcSurface.w);
-
-		const byte *src = (const byte *)srcSurface.getBasePtr(subRect.left, subRect.top);
-		const uint16 *mask = (const uint16 *)srcMask.getBasePtr(subRect.left, subRect.top);
-		byte *dst = (byte *)dstSurface.getBasePtr(destX, destY);
-
-		const int h = subRect.height();
-		const int w = subRect.width();
-		const int dstOffset = dstSurface.pitch - w;
-
-		for (int j = 0; j < h; ++j) {
-			for (int i = 0; i < w; i += 16, mask++) {
-				const uint16 m = *mask;
-
-				if (m == 0xFFFF) {
-					// all 16 pixels transparentm6
-					src += 16;
-					dst += 16;
-					continue;
-				}
-
-				for (int k = 0; k < 16; ++k) {
-					const uint16 bit = 1 << (15 - k);
-
-					if (m & bit) {
-						// transparent
-						src++;
-						dst++;
-					} else {
-						*dst++ = *src++;
-					}
-				}
-			}
-
-			dst += dstOffset;
-		}
-	}
-};
-
 
 #endif

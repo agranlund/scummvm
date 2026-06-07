@@ -427,9 +427,7 @@ MODULE_OBJS += \
 	events/atari/atari-events.o \
 	fs/atari/atari-fs.o \
 	fs/atari/atari-fs-factory.o \
-	graphics/atari/atari-c2p-asm.o \
-	graphics/atari/atari-graphics-asm.o \
-	graphics/atari/atari-nova.o \
+	graphics/atari/atari-graphics-nova.o \
 	mixer/null/null-mixer.o
 ifdef USE_ELF_LOADER
 MODULE_OBJS += \

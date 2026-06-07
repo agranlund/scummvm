@@ -28,7 +28,7 @@
 #ifndef ATARI_RAVEN
 #include "backends/graphics/atari/atari-graphics.h"
 #else
-#include "backends/graphics/atari/atari-nova.h"
+#include "backends/graphics/atari/atari-graphics-nova.h"
 #endif
 #include "backends/platform/atari/osystem_atari.h"
 #include "common/rect.h"

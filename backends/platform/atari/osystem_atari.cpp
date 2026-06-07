@@ -49,7 +49,7 @@
 #include "backends/graphics/atari/atari-graphics.h"
 #include "backends/mixer/atari/atari-mixer.h"
 #else
-#include "backends/graphics/atari/atari-nova.h"
+#include "backends/graphics/atari/atari-graphics-nova.h"
 #include "backends/mixer/null/null-mixer.h"
 #endif
 #include "backends/keymapper/hardware-input.h"
@@ -343,11 +343,7 @@ void OSystem_Atari::initBackend() {
 	_eventManager = new DefaultEventManager(makeKeyboardRepeatingEventSource(atariEventSource));
 
 	// AtariGraphicsManager needs _eventManager ready
-#ifndef ATARI_RAVEN
 	AtariGraphicsManager *atariGraphicsManager = new AtariGraphicsManager();
-#else
-	AtariGraphicsManager *atariGraphicsManager = new AtariCtpciManager();
-#endif	
 	_graphicsManager = atariGraphicsManager;
 
 	atariEventSource->setGraphicsManager(atariGraphicsManager);
