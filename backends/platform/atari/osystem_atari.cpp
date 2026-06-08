@@ -52,8 +52,8 @@
 #include "backends/graphics/atari/atari-graphics-nova.h"
 #include "backends/mixer/null/null-mixer.h"
 #endif
+#include "backends/platform/atari/thread.h"
 #include "backends/keymapper/hardware-input.h"
-#include "backends/mutex/null/null-mutex.h"
 #ifdef DYNAMIC_MODULES
 #include "backends/plugins/atari/atari-provider.h"
 #endif
@@ -84,60 +84,35 @@ extern void nf_print(const char* msg);
 
 static int s_app_id = -1;
 static void (*s_old_procterm)(void) = nullptr;
-
-static volatile uint32 counter_200hz;
-
 static bool s_dtor_already_called = false;
 
-static long atari_200hz_init(void)
-{
-	__asm__ __volatile__(
-	"\tmove		%%sr,-(%%sp)\n"
-	"\tor.w		#0x700,%%sr\n"
+void atari_thread_main(void) {
+	while(1) {
+		DefaultTimerManager* tm = g_system ? ((DefaultTimerManager *)g_system->getTimerManager()) : 0;
+		if (tm) {
+			tm->checkTimers();
+		}
+		atari_thread_yield();
+	}
+}
 
-	"\tmove.l	0x114.w,old_200hz\n"
-	"\tmove.l	#my_200hz,0x114.w\n"
-
-	"\tmove		(%%sp)+,%%sr\n"
-	"\tjbra		1f\n"
-
-	"\tdc.l		0x58425241\n" /* "XBRA" */
-	"\tdc.l		0x5343554d\n" /* "SCUM" */
-"old_200hz:\n"
-	"\tdc.l		0\n"
-"my_200hz:\n"
-	"\taddq.l	#1,%0\n"
-
-	"\tmove.l	old_200hz(%%pc),-(%%sp)\n"
-	"\trts\n"
-"1:\n"
-	: /* output */
-	: "m"(counter_200hz) /* inputs */
-	: "memory", "cc");
-
+static long init_thread(void) {
+	atari_200hz_init();
+	atari_thread_init(atari_thread_main);
 	return 0;
 }
 
-static long atari_200hz_shutdown(void)
-{
-	__asm__ __volatile__(
-	"\tmove		%%sr,-(%%sp)\n"
-	"\tor.w		#0x700,%%sr\n"
-
-	"\tmove.l	old_200hz,0x114.w\n"
-
-	"\tmove		(%%sp)+,%%sr\n"
-	: /* output */
-	: /* inputs */
-	: "memory", "cc");
-
+static long shutdown_thread(void) {
+	atari_200hz_shutdown();
+	atari_thread_shutdown();
 	return 0;
 }
+
 
 static void critical_restore() {
 	//debug("critical_restore()");
 
-	Supexec(atari_200hz_shutdown);
+	Supexec(shutdown_thread);
 
 #ifdef INPUT_ACTIVE
 	if (atari_old_kbdvec && atari_old_mousevec) {
@@ -237,8 +212,8 @@ OSystem_Atari::OSystem_Atari() {
 	kbdvecs->mousevec = atari_mousevec;
 #endif
 
-	Supexec(atari_200hz_init);
-	_startTime = counter_200hz;
+	Supexec(init_thread);
+	_startTime = atari_200hz_counter;
 	_timerInitialized = true;
 
 	// protect against sudden exit()
@@ -276,7 +251,7 @@ OSystem_Atari::~OSystem_Atari() {
 	_fsFactory = nullptr;
 
 	if (_timerInitialized) {
-		Supexec(atari_200hz_shutdown);
+		Supexec(shutdown_thread);
 		_timerInitialized = false;
 	}
 
@@ -415,18 +390,19 @@ void OSystem_Atari::engineAfterDelete() {
 }
 
 Common::MutexInternal *OSystem_Atari::createMutex() {
-	return new NullMutexInternal();
+	return new AtariMutex();
 }
 
 uint32 OSystem_Atari::getMillis(bool skipRecord) {
 	// CLOCKS_PER_SEC is 200, so no need to use floats
-	return 1000 * (counter_200hz - _startTime) / CLOCKS_PER_SEC;
+	return 1000 * (atari_200hz_counter- _startTime) / CLOCKS_PER_SEC;
 }
 
 void OSystem_Atari::delayMillis(uint msecs) {
 	const uint32 threshold = getMillis() + msecs;
 	while (getMillis() < threshold) {
 		update();
+		atari_thread_yield();
 	}
 }
 
@@ -548,22 +524,6 @@ Common::Path OSystem_Atari::getDefaultConfigFileName() {
 }
 
 void OSystem_Atari::update() {
-	// avoid a recursion loop if a timer callback decides to call OSystem::delayMillis()
-	static bool inTimer = false;
-
-	if (!inTimer) {
-		inTimer = true;
-		((DefaultTimerManager *)_timerManager)->checkTimers();
-		inTimer = false;
-	} else {
-		const Common::ConfigManager::Domain *activeDomain = ConfMan.getActiveDomain();
-		assert(activeDomain);
-
-		warning("%s/%s calls update() from timer",
-			activeDomain->getValOrDefault("engineid").c_str(),
-			activeDomain->getValOrDefault("gameid").c_str());
-	}
-
 #ifndef ATARI_RAVEN
 	((AtariMixerManager *)_mixerManager)->update();
 #else
