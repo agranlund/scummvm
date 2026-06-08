@@ -63,12 +63,10 @@ old_200hz:
 	dc.l	0
 my_200hz:
 	addq.l	#1,SYM(atari_200hz_counter)
-	cmp.l	#0,_thread_func(pc)
-	beq.b	1f
-	move.w	#0,-(sp)
-	move.l	#my_trap4,-(sp)
+	move.w	#0,-(sp)				/* push a fake frame for tail-calling */
+	move.l	#my_trap4,-(sp)			/* my_trap4 after TOS timerC handler */
 	move.w	#0x2700,-(sp)
-1:	move.l	old_200hz(pc),-(sp)
+	move.l	old_200hz(pc),-(sp)		/* TOS timerC handler */
 	rts
 
 
@@ -87,7 +85,10 @@ old_trap4:
 my_trap4:
 	or.w	#0x0700,sr			/* disable interrupts */
 	btst.b	#5,(sp)				/* called from super? */
-	beq.b	.select
+	bne.b	.ignore
+	cmp.l	#0,_thread_func		/* threads enabled? */
+	bne.b	.select
+.ignore:
 	rte
 
 .select:
@@ -132,10 +133,8 @@ my_trap4:
 
 /*--------------------------------------------------------------------*/
 SYM(atari_thread_yield):
-	cmp.l	#0,_thread_func
-	beq.b	1f
 	trap	#4
-1:	rts
+	rts
 
 /*--------------------------------------------------------------------*/
 	.even
@@ -184,10 +183,13 @@ SYM(atari_thread_shutdown):
 SYM(atari_mutex_lock):
 	move.b	_cur_tcb,d0
 	move.l	4(sp),a0
-1:	tas		(a0)
+	tas		(a0)
 	beq.b	.locked_new
-	cmp.b	1(a0),d0		/* did we hold the lock? */
-	bne.b	1b				/* no, try again */
+	cmp.b	1(a0),d0					/* did we hold the lock? */
+	beq.b	.locked_inc
+	trap	#4							/* no, yield and try again */
+	bra.b	atari_mutex_lock
+.locked_inc:
 	add.w	#1,2(a0)		/* increment count */
 	rts
 .locked_new:
