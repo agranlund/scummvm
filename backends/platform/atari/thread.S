@@ -41,15 +41,16 @@
 SYM(atari_200hz_init):
 	move.w	sr,-(sp)
 	or.w	#0x700,sr
-	move.l	0x114,old_200hz
-	move.l	#my_200hz,0x114.w
+	move.l	0x114,old_200hz			/* save old timerc vector */
+	move.l	#my_200hz,0x114.w		/* set new timerc vector */
 	move.w	(sp)+,sr
+	moveq.l	#0,d0
 	rts
 
 SYM(atari_200hz_shutdown):
 	move.w	sr,-(sp)
 	or.w	#0x700,sr
-	move.l	old_200hz(pc),0x114.w
+	move.l	old_200hz(pc),0x114.w	/* restore old timerc vector */
 	move.w	(sp)+,sr
 	moveq.l	#0,d0
 	rts
@@ -141,24 +142,25 @@ SYM(atari_thread_yield):
 SYM(atari_thread_init):
 	move.w	sr,-(sp)
 	or.w	#0x0700,sr
-	move.l	0x90.w,old_trap4			/* assign yield function in unused trap4 */
+	move.l	0x90.w,old_trap4		/* assign yield function in unused trap4 */
 	move.l	#my_trap4,0x90.w
-	move.l	6(sp),_thread_func
-	move.l	#0,_cur_tcb					/* thread0 is current */
+	move.l	6(sp),_thread_func		/* assign thread1 function */
+	move.l	#0,_cur_tcb				/* thread0 is current */
 	move.l	#_tcb1_top,a0
-	movem.l	d0-d7/a0-a6,-(a0)			/* cpu */
-	move.l	#_stack1_top,-(a0)			/* usp */
-	move.w	#0,-(a0)					/* frame: fmt/vec */
-	move.l	#thread_tramp,-(a0)			/* frame: pc */
-	move.w	(sp),d0						/* frame: sr */
+	movem.l	d0-d7/a0-a6,-(a0)		/* cpu */
+	move.l	#_stack1_top,-(a0)		/* usp */
+	move.w	#0,-(a0)				/* frame: fmt/vec */
+	move.l	#thread_tramp,-(a0)		/* frame: pc */
+	move.w	(sp),d0					/* frame: sr */
 	and.w	#0x700,d0
 	move.w	d0,-(a0)
-	move.l	(a0)+,d0					/* swap frame around */
+	move.l	(a0)+,d0				/* swap frame around */
 	move.l	(a0),d1
 	move.l	d0,(a0)
 	move.l	d1,-(a0)
-	move.l	a0,_tcb1_top				/* frame ptr */
+	move.l	a0,_tcb1_top			/* frame ptr */
 	move.w	(sp)+,sr
+	moveq.l	#0,d0
 	rts
 thread_tramp:
 	move.l	_thread_func,a0
@@ -169,9 +171,10 @@ thread_tramp:
 SYM(atari_thread_shutdown):
 	move.w	sr,-(sp)
 	or.w	#0x700,sr
-	move.l	old_trap4,0x90.w
-	move.l	#0,_thread_func
+	move.l	old_trap4,0x90.w		/* restore old trap4 */
+	move.l	#0,_thread_func			/* clear thread1 func */
 	move.w	(sp)+,sr
+	moveq.l	#0,d0
 	rts
 
 /* -------------------------------------------------------------------------
@@ -185,23 +188,23 @@ SYM(atari_mutex_lock):
 	move.l	4(sp),a0
 	tas		(a0)
 	beq.b	.locked_new
-	cmp.b	1(a0),d0					/* did we hold the lock? */
+	cmp.b	1(a0),d0			/* did we hold the lock? */
 	beq.b	.locked_inc
-	trap	#4							/* no, yield and try again */
+	trap	#4					/* no, yield and try again */
 	bra.b	atari_mutex_lock
 .locked_inc:
-	add.w	#1,2(a0)		/* increment count */
+	add.w	#1,2(a0)			/* increment count */
 	rts
 .locked_new:
-	move.b	d0,1(a0)		/* id */
-	move.w	#1,2(a0)		/* count */
+	move.b	d0,1(a0)			/* set id */
+	move.w	#1,2(a0)			/* set count */
 	rts
 
 SYM(atari_mutex_unlock):
 	move.l	4(sp),a0
-	sub.w	#1,2(a0)		/* decrement count */
+	sub.w	#1,2(a0)			/* decrement count */
 	bne.b	1f
-	move.b	#0,(a0)			/* clear tas */
+	move.b	#0,(a0)				/* clear tas */
 1:	rts
 
 

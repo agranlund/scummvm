@@ -24,12 +24,12 @@
 
 #include "common/mutex.h"
 
-extern "C" void atari_200hz_init(void);
-extern "C" long atari_200hz_shutdown(void);
+extern "C" long atari_200hz_init(void);					/* call in super */
+extern "C" long atari_200hz_shutdown(void);				/* call in super */
 extern "C" uint32 atari_200hz_counter;
 
-extern "C" void atari_thread_init(void(*func)(void));
-extern "C" void atari_thread_shutdown(void);
+extern "C" long atari_thread_init(void(*func)(void));	/* call in super */
+extern "C" long atari_thread_shutdown(void);			/* call in super */
 extern "C" void atari_thread_yield(void);
 
 extern "C" void atari_mutex_lock(volatile uint32_t* m);
