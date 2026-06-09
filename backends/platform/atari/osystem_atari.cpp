@@ -87,10 +87,17 @@ static void (*s_old_procterm)(void) = nullptr;
 static bool s_dtor_already_called = false;
 
 void atari_thread_main(void) {
+	OSystem_Atari* sys = dynamic_cast<OSystem_Atari*>(g_system);
 	while(1) {
-		DefaultTimerManager* tm = g_system ? ((DefaultTimerManager *)g_system->getTimerManager()) : 0;
-		if (tm) {
+		if (DefaultTimerManager* tm = (DefaultTimerManager*)sys->getTimerManager()) {
 			tm->checkTimers();
+		}
+		if (MixerManager* mixer = sys->getMixerManager()) {
+			#ifdef ATARI_RAVEN
+				((NullMixerManager *)mixer)->update();
+			#else
+				((AtariMixerManager *)mixer)->update();
+			#endif	
 		}
 		atari_thread_yield();
 	}
@@ -524,11 +531,6 @@ Common::Path OSystem_Atari::getDefaultConfigFileName() {
 }
 
 void OSystem_Atari::update() {
-#ifndef ATARI_RAVEN
-	((AtariMixerManager *)_mixerManager)->update();
-#else
-	((NullMixerManager *)_mixerManager)->update();
-#endif	
 }
 
 OSystem *OSystem_Atari_create() {
