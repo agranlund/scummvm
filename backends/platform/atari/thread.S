@@ -21,6 +21,23 @@
 
  #include "symbols.h"
 
+/* -------------------------------------------------------------------------
+ * Simple two-thread preemptive context switcher
+ *
+ * Thread0 is main thread inheriting context from application
+ * Thread1 is task thread started via atari_thread_init().
+ * 
+ *  - Usermode threads only, it does not preempt or yield
+ *    threads that are in supervisor mode.
+ *
+ *  - Preempts by tail-calling yield from the 200hz timer
+ *
+ *  - Manual yield is provided by atari_thread_yield()
+ *    Uses Trap #4 internally
+ * -----------------------------------------------------------------------*/
+
+	.extern SYM(Getcookie)
+
 	.global SYM(atari_200hz_init)
 	.global SYM(atari_200hz_shutdown)
 	.global	SYM(atari_200hz_counter)
@@ -29,6 +46,7 @@
 	.global SYM(atari_thread_yield)
 	.global SYM(atari_mutex_lock)
 	.global SYM(atari_mutex_unlock)
+
 
 /* -------------------------------------------------------------------------
  *
@@ -76,6 +94,7 @@ my_200hz:
  * Context switcher
  *
  * -----------------------------------------------------------------------*/
+
 	.align 16
 	dc.l	0
 	dc.l	0
@@ -84,72 +103,109 @@ my_200hz:
 old_trap4:
 	dc.l	0
 my_trap4:
-	or.w	#0x0700,sr			/* disable interrupts */
-	btst.b	#5,(sp)				/* called from super? */
-	bne.b	.ignore
-	cmp.l	#0,_thread_func		/* threads enabled? */
+	or.w	#0x0700,sr				/* disable interrupts */
+	btst.b	#5,(sp)					/* don't preempt if thread is in supervisor */
+	bne.b	1f
+	cmp.l	#0,_thread_func			/* threads enabled? */
 	bne.b	.select
-.ignore:
-	rte
+1:	rte
 
 .select:
-	move.l	sp,_sav_sp			/* save ssp */
-	tst.b	_cur_tcb
-	bne.b	.select0
-
-.select1:
-	st		_cur_tcb
+	move.l	sp,_sav_sp				/* save ssp */
+	eor.b	#1,_cur_tcb				/* select next thread */
+	beq.b	2f
 	move.l	#_tcb0_top,_tcb_cur_top
 	move.l	#_tcb1_top,_tcb_new_top
 	bra.b	.save
-
-.select0:
-	sf		_cur_tcb
-	move.l	#_tcb1_top,_tcb_cur_top
+2:	move.l	#_tcb1_top,_tcb_cur_top
 	move.l	#_tcb0_top,_tcb_new_top
 
 .save:
 	move.l	_tcb_cur_top,sp
-	movem.l	d0-d7/a0-a6,-(sp)	/* save cpu */
-	move.l	%usp,a0				/* save usp */
+	movem.l	d0-d7/a0-a6,-(sp)		/* save cpu */
+	move.l	%usp,a0					/* save usp */
 	move.l	a0,-(sp)
-	/* todo: save fpu */
-	move.l	_sav_sp,a0			/* save frame */
+	move.w	_fpu_info,d0			/* save fpu */
+	bmi.b	3f
+	fsave	-(sp)
+	move.b	(sp,d0.w),d0
+	beq.b	3f
+	fmovem.x %fp0-%fp7,-(sp)
+	fmovem.l %fpcr/%fpsr/%fpiar,-(sp)
+3:	move.w	d0,-(sp)
+	move.l	_sav_sp,a0				/* save frame */
 	move.l	(a0)+,-(sp)
 	move.l	(a0)+,-(sp)
-	move.l	_tcb_cur_top,a1		/* save frame ptr */
+	move.l	_tcb_cur_top,a1			/* save tcb ptr */
 	move.l	sp,(a1)
 
 .restore:
 	move.l	_tcb_new_top,a1
 	move.l	(a1),sp
-	move.l	(sp)+,-(a0)			/* restore frame */
+	move.l	(sp)+,-(a0)				/* restore frame */
 	move.l	(sp)+,-(a0)
-	move.l	(sp)+,a0			/* restore usp */
+	move.w	(sp)+,d0				/* restore fpu */
+	bmi.b	5f
+	tst.b	d0
+	beq.b	4f
+	fmovem.l (sp)+,%fpcr/%fpsr/%fpiar
+	fmovem.x (sp)+,%fp0-%fp7
+4:	frestore (sp)+
+5:	move.l	(sp)+,a0				/* restore usp */
 	move.l	a0,%usp
-	/* todo: restore fpu */
-	movem.l	(sp)+,d0-d7/a0-a6	/* restore cpu */
-	move.l	_sav_sp,sp			/* restore ssp */
+	movem.l	(sp)+,d0-d7/a0-a6		/* restore cpu */
+	move.l	_sav_sp,sp				/* restore ssp */
 	rte
+
 
 /*--------------------------------------------------------------------*/
 SYM(atari_thread_yield):
 	trap	#4
 	rts
 
+
 /*--------------------------------------------------------------------*/
 	.even
 SYM(atari_thread_init):
 	move.w	sr,-(sp)
 	or.w	#0x0700,sr
-	move.l	0x90.w,old_trap4		/* assign yield function in unused trap4 */
+
+	move.w	#0xffff,_fpu_info		/* determine fpu type */
+	move.l	#0,-(sp)
+	move.l	sp,-(sp)
+	move.l	#0x5F465055,-(sp)		/* _FPU */
+	jsr		SYM(Getcookie)
+	addq.l	#8,sp
+	move.l	(sp)+,d1
+	tst.l	d0						/* C_FOUND */
+	bne.b	2f
+	swap	d1
+	btst.b	#4,d1					/* 68060 */
+	beq.b	1f
+	move.w	#2,_fpu_info
+	bra.b	2f
+1:	and.b	#0x0e,d1				/* 68040, 68882, 68881 */
+	beq.b	2f
+	move.w	#0,_fpu_info
+
+2:	move.l	0x90.w,old_trap4		/* general setup */
 	move.l	#my_trap4,0x90.w
-	move.l	6(sp),_thread_func		/* assign thread1 function */
-	move.l	#0,_cur_tcb				/* thread0 is current */
-	move.l	#_tcb1_top,a0
+	move.l	6(sp),_thread_func
+	move.b	#0,_cur_tcb
+
+	move.l	#_tcb1_top,a0			/* init thread1 context */
 	movem.l	d0-d7/a0-a6,-(a0)		/* cpu */
 	move.l	#_stack1_top,-(a0)		/* usp */
-	move.w	#0,-(a0)				/* frame: fmt/vec */
+	moveq	#0,d1					/* fpu */
+	move.w	_fpu_info,d0
+	bmi.b	4f
+	beq.b	3f
+	move.l	d1,-(a0)				/* 68060 null frame */
+	move.l	d1,-(a0)
+3:	move.l	d1,-(a0)				/* 68XXX null frame */
+	move.b	d1,d0
+4:	move.w	d0,-(a0)				/* fpu context info */
+	move.w	d1,-(a0)				/* frame: fmt/vec */
 	move.l	#thread_tramp,-(a0)		/* frame: pc */
 	move.w	(sp),d0					/* frame: sr */
 	and.w	#0x700,d0
@@ -158,7 +214,7 @@ SYM(atari_thread_init):
 	move.l	(a0),d1
 	move.l	d0,(a0)
 	move.l	d1,-(a0)
-	move.l	a0,_tcb1_top			/* frame ptr */
+	move.l	a0,_tcb1_top			/* tcb ptr */
 	move.w	(sp)+,sr
 	moveq.l	#0,d0
 	rts
@@ -166,6 +222,7 @@ thread_tramp:
 	move.l	_thread_func,a0
 	jsr		(a0)
 1:	bra.b	1b
+
 
 /*--------------------------------------------------------------------*/
 SYM(atari_thread_shutdown):
@@ -177,6 +234,7 @@ SYM(atari_thread_shutdown):
 	moveq.l	#0,d0
 	rts
 
+
 /* -------------------------------------------------------------------------
  *
  * Recursive mutex
@@ -186,28 +244,24 @@ SYM(atari_thread_shutdown):
 SYM(atari_mutex_lock):
 	move.b	_cur_tcb,d0
 	move.l	4(sp),a0
-	tas		(a0)
-	beq.b	.locked_new
-	cmp.b	1(a0),d0			/* did we hold the lock? */
-	beq.b	.locked_inc
-	trap	#4					/* no, yield and try again */
+	tas		(a0)					/* try lock */
+	beq.b	2f
+	cmp.b	1(a0),d0				/* already ours? */
+	beq.b	1f
+	trap	#4						/* no, yield and try again */
 	bra.b	atari_mutex_lock
-.locked_inc:
-	add.w	#1,2(a0)			/* increment count */
+1:	add.w	#1,2(a0)				/* yes, increment counter */
 	rts
-.locked_new:
-	move.b	d0,1(a0)			/* set id */
-	move.w	#1,2(a0)			/* set count */
+2:	move.b	d0,1(a0)				/* init owner id */
+	move.w	#1,2(a0)				/* init counter */
 	rts
 
 SYM(atari_mutex_unlock):
 	move.l	4(sp),a0
-	sub.w	#1,2(a0)			/* decrement count */
+	sub.w	#1,2(a0)				/* decrement counter */
 	bne.b	1f
-	move.b	#0,(a0)				/* clear tas */
+	move.b	#0,(a0)					/* unlock */
 1:	rts
-
-
 
 
 /*--------------------------------------------------------------------*/
@@ -218,7 +272,9 @@ SYM(atari_mutex_unlock):
 SYM(atari_200hz_counter):	ds.l 1
 _thread_func:				ds.l 1
 _sav_sp:					ds.l 1
-_cur_tcb:					ds.l 1
+_cur_tcb:					ds.b 1
+_padding:					ds.b 1
+_fpu_info:					ds.w 1	/* 0xffff=no fpu, 0x0000=6888X, 0x0002=68060 */
 _tcb_cur_top:				ds.l 1
 _tcb_new_top:				ds.l 1
 
