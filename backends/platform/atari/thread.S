@@ -91,7 +91,7 @@ old_200hz:
 my_200hz:
 	addq.l	#1,SYM(atari_200hz_counter)
 	move.w	#0,-(sp)				/* push a fake format0 frame for tail-calling */
-	pea.l	my_trap4(pc)			/* into my_trap4 after TOS timerC handler */
+	pea.l	my_trap4_from_isr(pc)	/* into thread scheduler after TOS timerC handler */
 	move.w	#0x2700,-(sp)			/* with interrupts disabled */
 	jmp		([old_200hz,pc])		/* now jump to the TOS timerC handler */
 
@@ -118,7 +118,8 @@ _tcb_new_top:	dc.l 0
 old_trap4:
 	dc.l	0
 my_trap4:
-	or.w	#0x0700,sr				/* disable interrupts, necessary if came from manual trap4 */
+	move.w	#0x2700,sr
+my_trap4_from_isr:
 	btst.b	#5,(sp)					/* don't preempt if thread is in supervisor */
 	bne.b	1f
 	tst.l	_thread_func(pc)		/* threads enabled? */
@@ -265,7 +266,7 @@ SYM(atari_mutex_lock):
 	beq.b	1f
 	trap	#4						/* no, yield and try again */
 	bra.b	atari_mutex_lock
-1:	add.w	#1,2(a0)				/* yes, increment counter */
+1:	addq.w	#1,2(a0)				/* yes, increment counter */
 	rts
 2:	move.b	d0,1(a0)				/* init owner id */
 	move.w	#1,2(a0)				/* init counter */
@@ -273,7 +274,7 @@ SYM(atari_mutex_lock):
 
 SYM(atari_mutex_unlock):
 	move.l	4(sp),a0
-	sub.w	#1,2(a0)				/* decrement counter */
+	subq.w	#1,2(a0)				/* decrement counter */
 	bne.b	1f
 	move.b	#0,(a0)					/* unlock */
 1:	rts
