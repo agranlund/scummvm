@@ -93,8 +93,7 @@ my_200hz:
 	move.w	#0,-(sp)				/* push a fake format0 frame for tail-calling */
 	move.l	#my_trap4,-(sp)			/* into my_trap4 after TOS timerC handler */
 	move.w	#0x2700,-(sp)			/* with interrupts disabled */
-	move.l	old_200hz(pc),-(sp)		/* now jump to the TOS timerC handler */
-	rts
+	jmp		([old_200hz,pc])		/* now jump to the TOS timerC handler */
 
 
 /* -------------------------------------------------------------------------
