@@ -22,18 +22,26 @@
  #include "symbols.h"
 
 /* -------------------------------------------------------------------------
- * Simple two-thread preemptive context switcher
+ * Minimal two-thread preemptive context switcher
  *
  * Thread0 is main thread inheriting context from application
  * Thread1 is task thread started via atari_thread_init().
  * 
- *  - Usermode threads only, it does not preempt or yield
- *    threads that are in supervisor mode.
+ *  - Usermode threads only, does not preempt or yield
+ *    threads which are in supervisor mode.
  *
  *  - Preempts by tail-calling yield from the 200hz timer
  *
  *  - Manual yield is provided by atari_thread_yield()
  *    Uses Trap #4 internally
+ *
+ *  - my_trap4 is guaranteed to always receive a stacked format0 frame.
+ *    interrupts are disabled inside. the use of some global temp
+ *    variable inside is safe.
+ *
+ *  - threads spin-yield when waiting on mutex
+ *    not super efficient and if needed we could/should add
+ *    sleep mechanism with wake-on-mutex-unlock.
  * -----------------------------------------------------------------------*/
 
 	.extern SYM(Getcookie)
@@ -82,10 +90,10 @@ old_200hz:
 	dc.l	0
 my_200hz:
 	addq.l	#1,SYM(atari_200hz_counter)
-	move.w	#0,-(sp)				/* push a fake frame for tail-calling */
-	move.l	#my_trap4,-(sp)			/* my_trap4 after TOS timerC handler */
-	move.w	#0x2700,-(sp)
-	move.l	old_200hz(pc),-(sp)		/* TOS timerC handler */
+	move.w	#0,-(sp)				/* push a fake format0 frame for tail-calling */
+	move.l	#my_trap4,-(sp)			/* into my_trap4 after TOS timerC handler */
+	move.w	#0x2700,-(sp)			/* with interrupts disabled */
+	move.l	old_200hz(pc),-(sp)		/* now jump to the TOS timerC handler */
 	rts
 
 
@@ -103,7 +111,7 @@ my_200hz:
 old_trap4:
 	dc.l	0
 my_trap4:
-	or.w	#0x0700,sr				/* disable interrupts */
+	or.w	#0x0700,sr				/* disable interrupts, necessary if came from manual trap4 */
 	btst.b	#5,(sp)					/* don't preempt if thread is in supervisor */
 	bne.b	1f
 	cmp.l	#0,_thread_func			/* threads enabled? */
@@ -122,10 +130,10 @@ my_trap4:
 
 .save:
 	move.l	_tcb_cur_top,sp
-	movem.l	d0-d7/a0-a6,-(sp)		/* save cpu */
-	move.l	%usp,a0					/* save usp */
+	movem.l	d0-d7/a0-a6,-(sp)		/* cpu */
+	move.l	%usp,a0					/* usp  */
 	move.l	a0,-(sp)
-	move.w	_fpu_info,d0			/* save fpu */
+	move.w	_fpu_info,d0			/* fpu */
 	bmi.b	3f
 	fsave	-(sp)
 	move.b	(sp,d0.w),d0
@@ -133,27 +141,29 @@ my_trap4:
 	fmovem.x %fp0-%fp7,-(sp)
 	fmovem.l %fpcr/%fpsr/%fpiar,-(sp)
 3:	move.w	d0,-(sp)
-	move.l	_sav_sp,a0				/* save frame */
+	move.l	_sav_sp,a0				/* exception frame */
 	move.l	(a0)+,-(sp)
 	move.l	(a0)+,-(sp)
-	move.l	_tcb_cur_top,a1			/* save tcb ptr */
+	move.l	_tcb_cur_top,a1			/* context ptr */
 	move.l	sp,(a1)
 
 .restore:
-	move.l	_tcb_new_top,a1
+	move.l	_tcb_new_top,a1			/* context ptr */
 	move.l	(a1),sp
-	move.l	(sp)+,-(a0)				/* restore frame */
+	move.l	(sp)+,-(a0)				/* exception frame */
 	move.l	(sp)+,-(a0)
-	move.w	(sp)+,d0				/* restore fpu */
+	move.w	(sp)+,d0				/* fpu */
 	bmi.b	5f
 	tst.b	d0
 	beq.b	4f
 	fmovem.l (sp)+,%fpcr/%fpsr/%fpiar
 	fmovem.x (sp)+,%fp0-%fp7
 4:	frestore (sp)+
-5:	move.l	(sp)+,a0				/* restore usp */
+5:	move.l	(sp)+,a0				/* usp */
 	move.l	a0,%usp
-	movem.l	(sp)+,d0-d7/a0-a6		/* restore cpu */
+	movem.l	(sp)+,d0-d7/a0-a6		/* cpu */
+
+.done:
 	move.l	_sav_sp,sp				/* restore ssp */
 	rte
 
@@ -170,7 +180,7 @@ SYM(atari_thread_init):
 	move.w	sr,-(sp)
 	or.w	#0x0700,sr
 
-	move.w	#0xffff,_fpu_info		/* determine fpu type */
+	move.w	#0xffff,_fpu_info		/* determine fpu info */
 	move.l	#0,-(sp)
 	move.l	sp,-(sp)
 	move.l	#0x5F465055,-(sp)		/* _FPU */
@@ -205,16 +215,16 @@ SYM(atari_thread_init):
 3:	move.l	d1,-(a0)				/* 68XXX null frame */
 	move.b	d1,d0
 4:	move.w	d0,-(a0)				/* fpu context info */
-	move.w	d1,-(a0)				/* frame: fmt/vec */
-	move.l	#thread_tramp,-(a0)		/* frame: pc */
-	move.w	(sp),d0					/* frame: sr */
+	move.w	d1,-(a0)				/* exception frame: fmt/vec */
+	move.l	#thread_tramp,-(a0)		/* exception frame: pc */
+	move.w	(sp),d0					/* exception frame: sr */
 	and.w	#0x700,d0
 	move.w	d0,-(a0)
 	move.l	(a0)+,d0				/* swap frame around */
 	move.l	(a0),d1
 	move.l	d0,(a0)
 	move.l	d1,-(a0)
-	move.l	a0,_tcb1_top			/* tcb ptr */
+	move.l	a0,_tcb1_top			/* context ptr */
 	move.w	(sp)+,sr
 	moveq.l	#0,d0
 	rts
@@ -246,7 +256,7 @@ SYM(atari_mutex_lock):
 	move.l	4(sp),a0
 	tas		(a0)					/* try lock */
 	beq.b	2f
-	cmp.b	1(a0),d0				/* already ours? */
+	cmp.b	1(a0),d0				/* was ours? */
 	beq.b	1f
 	trap	#4						/* no, yield and try again */
 	bra.b	atari_mutex_lock
