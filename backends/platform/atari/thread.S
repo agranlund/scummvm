@@ -55,6 +55,8 @@
 	.global SYM(atari_mutex_lock)
 	.global SYM(atari_mutex_unlock)
 
+	.text
+	.even
 
 /* -------------------------------------------------------------------------
  *
@@ -62,8 +64,6 @@
  *
  * -----------------------------------------------------------------------*/
 
-	.text
-	.even
 SYM(atari_200hz_init):
 	move.w	sr,-(sp)
 	or.w	#0x700,sr
@@ -82,7 +82,7 @@ SYM(atari_200hz_shutdown):
 	rts
 
 	.align 16
-	dc.l	0
+SYM(atari_200hz_counter):
 	dc.l	0
 	dc.l	0x58425241	/* XBRA */
 	dc.l	0x5343554d	/* SCUM */
@@ -91,7 +91,7 @@ old_200hz:
 my_200hz:
 	addq.l	#1,SYM(atari_200hz_counter)
 	move.w	#0,-(sp)				/* push a fake format0 frame for tail-calling */
-	move.l	#my_trap4,-(sp)			/* into my_trap4 after TOS timerC handler */
+	pea.l	my_trap4(pc)			/* into my_trap4 after TOS timerC handler */
 	move.w	#0x2700,-(sp)			/* with interrupts disabled */
 	jmp		([old_200hz,pc])		/* now jump to the TOS timerC handler */
 
@@ -103,7 +103,15 @@ my_200hz:
  * -----------------------------------------------------------------------*/
 
 	.align 16
-	dc.l	0
+_thread_func:	dc.l 0
+_sav_sp:		dc.l 0
+_cur_tcb:		dc.b 0
+_padding:		dc.b 0
+_fpu_info:		dc.w 0xffff/* 0xffff=no fpu, 0x0000=6888X, 0x0002=68060 */
+_tcb_cur_top:	dc.l 0
+_tcb_new_top:	dc.l 0
+
+	.align 16
 	dc.l	0
 	dc.l	0x58425241	/* XBRA */
 	dc.l	0x5343554d	/* SCUM */
@@ -113,7 +121,7 @@ my_trap4:
 	or.w	#0x0700,sr				/* disable interrupts, necessary if came from manual trap4 */
 	btst.b	#5,(sp)					/* don't preempt if thread is in supervisor */
 	bne.b	1f
-	cmp.l	#0,_thread_func			/* threads enabled? */
+	tst.l	_thread_func(pc)		/* threads enabled? */
 	bne.b	.select
 1:	rte
 
@@ -128,11 +136,11 @@ my_trap4:
 	move.l	#_tcb0_top,_tcb_new_top
 
 .save:
-	move.l	_tcb_cur_top,sp
+	move.l	_tcb_cur_top(pc),sp
 	movem.l	d0-d7/a0-a6,-(sp)		/* cpu */
 	move.l	%usp,a0					/* usp  */
 	move.l	a0,-(sp)
-	move.w	_fpu_info,d0			/* fpu */
+	move.w	_fpu_info(pc),d0		/* fpu */
 	bmi.b	3f
 	fsave	-(sp)
 	move.b	(sp,d0.w),d0
@@ -140,16 +148,16 @@ my_trap4:
 	fmovem.x %fp0-%fp7,-(sp)
 	fmovem.l %fpcr/%fpsr/%fpiar,-(sp)
 3:	move.w	d0,-(sp)
-	move.l	_sav_sp,a0				/* exception frame */
+	move.l	_sav_sp(pc),a0			/* exception frame */
 	move.l	(a0)+,-(sp)
-	move.l	(a0)+,-(sp)
-	move.l	_tcb_cur_top,a1			/* context ptr */
+	move.l	(a0),-(sp)
+	move.l	_tcb_cur_top(pc),a1		/* context ptr */
 	move.l	sp,(a1)
 
 .restore:
-	move.l	_tcb_new_top,a1			/* context ptr */
+	move.l	_tcb_new_top(pc),a1		/* context ptr */
 	move.l	(a1),sp
-	move.l	(sp)+,-(a0)				/* exception frame */
+	move.l	(sp)+,(a0)				/* exception frame */
 	move.l	(sp)+,-(a0)
 	move.w	(sp)+,d0				/* fpu */
 	bmi.b	5f
@@ -160,10 +168,10 @@ my_trap4:
 4:	frestore (sp)+
 5:	move.l	(sp)+,a0				/* usp */
 	move.l	a0,%usp
-	movem.l	(sp)+,d0-d7/a0-a6		/* cpu */
+	movem.l	(sp),d0-d7/a0-a6		/* cpu */
 
 .done:
-	move.l	_sav_sp,sp				/* restore ssp */
+	move.l	_sav_sp(pc),sp			/* restore ssp */
 	rte
 
 
@@ -174,7 +182,6 @@ SYM(atari_thread_yield):
 
 
 /*--------------------------------------------------------------------*/
-	.even
 SYM(atari_thread_init):
 	move.w	sr,-(sp)
 	or.w	#0x0700,sr
@@ -206,7 +213,7 @@ SYM(atari_thread_init):
 	movem.l	d0-d7/a0-a6,-(a0)		/* cpu */
 	move.l	#_stack1_top,-(a0)		/* usp */
 	moveq	#0,d1					/* fpu */
-	move.w	_fpu_info,d0
+	move.w	_fpu_info(pc),d0
 	bmi.b	4f
 	beq.b	3f
 	move.l	d1,-(a0)				/* 68060 null frame */
@@ -228,8 +235,7 @@ SYM(atari_thread_init):
 	moveq.l	#0,d0
 	rts
 thread_tramp:
-	move.l	_thread_func,a0
-	jsr		(a0)
+	jsr		([_thread_func,pc])
 1:	bra.b	1b
 
 
@@ -237,7 +243,7 @@ thread_tramp:
 SYM(atari_thread_shutdown):
 	move.w	sr,-(sp)
 	or.w	#0x700,sr
-	move.l	old_trap4,0x90.w		/* restore old trap4 */
+	move.l	old_trap4(pc),0x90.w	/* restore old trap4 */
 	move.l	#0,_thread_func			/* clear thread1 func */
 	move.w	(sp)+,sr
 	moveq.l	#0,d0
@@ -251,7 +257,7 @@ SYM(atari_thread_shutdown):
  * -----------------------------------------------------------------------*/
 
 SYM(atari_mutex_lock):
-	move.b	_cur_tcb,d0
+	move.b	_cur_tcb(pc),d0
 	move.l	4(sp),a0
 	tas		(a0)					/* try lock */
 	beq.b	2f
@@ -276,16 +282,6 @@ SYM(atari_mutex_unlock):
 /*--------------------------------------------------------------------*/
 	.bss
 /*--------------------------------------------------------------------*/
-
-	.align 16
-SYM(atari_200hz_counter):	ds.l 1
-_thread_func:				ds.l 1
-_sav_sp:					ds.l 1
-_cur_tcb:					ds.b 1
-_padding:					ds.b 1
-_fpu_info:					ds.w 1	/* 0xffff=no fpu, 0x0000=6888X, 0x0002=68060 */
-_tcb_cur_top:				ds.l 1
-_tcb_new_top:				ds.l 1
 
 	.align 16
 _tcb0_btm:					ds.l 255
