@@ -108,7 +108,6 @@ _sav_sp:		dc.l 0
 _cur_tcb:		dc.b 0
 _padding:		dc.b 0
 _fpu_info:		dc.w 0xffff/* 0xffff=no fpu, 0x0000=6888X, 0x0002=68060 */
-_tcb_cur_top:	dc.l 0
 _tcb_new_top:	dc.l 0
 
 	.align 16
@@ -130,16 +129,16 @@ my_trap4_from_isr:
 	move.l	sp,_sav_sp				/* save ssp */
 	eor.b	#1,_cur_tcb				/* select next thread */
 	beq.b	2f
-	move.l	#_tcb0_top,_tcb_cur_top
-	move.l	#_tcb1_top,_tcb_new_top
+	move.l	#_tcb0_top,sp
+	move.l	_tcb1_top,_tcb_new_top
 	bra.b	.save
-2:	move.l	#_tcb1_top,_tcb_cur_top
-	move.l	#_tcb0_top,_tcb_new_top
+2:	move.l	#_tcb1_top,sp
+	move.l	_tcb0_top,_tcb_new_top
 
 .save:
-	move.l	_tcb_cur_top(pc),sp
 	movem.l	d0-d7/a0-a6,-(sp)		/* cpu */
-	move.l	%usp,a0					/* usp  */
+	move.l	%usp,a0					/* usp */
+	lea.l	60(sp),a5
 	move.l	a0,-(sp)
 	move.w	_fpu_info(pc),d0		/* fpu */
 	bmi.b	3f
@@ -152,12 +151,10 @@ my_trap4_from_isr:
 	move.l	_sav_sp(pc),a0			/* exception frame */
 	move.l	(a0)+,-(sp)
 	move.l	(a0),-(sp)
-	move.l	_tcb_cur_top(pc),a1		/* context ptr */
-	move.l	sp,(a1)
+	move.l	sp,(a5)					/* context ptr */
 
 .restore:
-	move.l	_tcb_new_top(pc),a1		/* context ptr */
-	move.l	(a1),sp
+	move.l	_tcb_new_top(pc),sp		/* context ptr */
 	move.l	(sp)+,(a0)				/* exception frame */
 	move.l	(sp)+,-(a0)
 	move.w	(sp)+,d0				/* fpu */
