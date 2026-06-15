@@ -108,7 +108,6 @@ _sav_sp:		dc.l 0
 _cur_tcb:		dc.b 0
 _padding:		dc.b 0
 _fpu_info:		dc.w 0xffff/* 0xffff=no fpu, 0x0000=6888X, 0x0002=68060 */
-_tcb_new_top:	dc.l 0
 
 	.align 16
 	dc.l	0
@@ -130,10 +129,10 @@ my_trap4_from_isr:
 	eor.b	#1,_cur_tcb				/* select next thread */
 	beq.b	2f
 	move.l	#_tcb0_top,sp
-	move.l	_tcb1_top,_tcb_new_top
+	move.l	_tcb1_top,(sp)
 	bra.b	.save
 2:	move.l	#_tcb1_top,sp
-	move.l	_tcb0_top,_tcb_new_top
+	move.l	_tcb0_top,(sp)
 
 .save:
 	movem.l	d0-d7/a0-a6,-(sp)		/* cpu */
@@ -149,27 +148,24 @@ my_trap4_from_isr:
 	fmovem.l %fpcr/%fpsr/%fpiar,-(sp)
 3:	move.w	d0,-(sp)
 	move.l	_sav_sp(pc),a0			/* exception frame */
+	move.l	(a5),a4
 	move.l	(a0)+,-(sp)
 	move.l	(a0),-(sp)
 	move.l	sp,(a5)					/* context ptr */
 
 .restore:
-	move.l	_tcb_new_top(pc),sp		/* context ptr */
-	move.l	(sp)+,(a0)				/* exception frame */
-	move.l	(sp)+,-(a0)
-	move.w	(sp)+,d0				/* fpu */
+	move.l	(a4)+,(a0)				/* exception frame */
+	move.l	(a4)+,-(a0)
+	move.w	(a4)+,d0				/* fpu */
 	bmi.b	5f
-	tst.b	d0
 	beq.b	4f
-	fmovem.l (sp)+,%fpcr/%fpsr/%fpiar
-	fmovem.x (sp)+,%fp0-%fp7
-4:	frestore (sp)+
-5:	move.l	(sp)+,a0				/* usp */
-	move.l	a0,%usp
-	movem.l	(sp),d0-d7/a0-a6		/* cpu */
-
-.done:
+	fmovem.l (a4)+,%fpcr/%fpsr/%fpiar
+	fmovem.x (a4)+,%fp0-%fp7
+4:	frestore (a4)+
+5:	move.l	(a4)+,a0				/* usp */
 	move.l	_sav_sp(pc),sp			/* restore ssp */
+	move.l	a0,%usp
+	movem.l	(a4),d0-d7/a0-a6		/* cpu */
 	rte
 
 
