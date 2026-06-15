@@ -162,9 +162,9 @@ my_trap4_from_isr:
 	fmovem.l (a4)+,%fpcr/%fpsr/%fpiar
 	fmovem.x (a4)+,%fp0-%fp7
 4:	frestore (a4)+
-5:	move.l	(a4)+,a0				/* usp */
-	move.l	_sav_sp(pc),sp			/* restore ssp */
-	move.l	a0,%usp
+5:	move.l	(a4)+,a1				/* usp */
+	move.l	a0,sp					/* restore ssp */
+	move.l	a1,%usp
 	movem.l	(a4),d0-d7/a0-a6		/* cpu */
 	rte
 
