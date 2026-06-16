@@ -60,7 +60,6 @@ public:
 
 	const OSystem::GraphicsMode *getSupportedGraphicsModes() const override {
 		static const OSystem::GraphicsMode graphicsModes[] = {
-			{ "direct", "Direct rendering", (int)GraphicsMode::DirectRendering },
 			{ "single", "Single buffering", (int)GraphicsMode::SingleBuffering },
 			{ nullptr, nullptr, 0 }
 		};
@@ -122,9 +121,7 @@ protected:
 	void freeSurfaces();
 
 	enum class GraphicsMode : int {
-		DirectRendering = 0,
 		SingleBuffering = 1,
-		TripleBuffering = 3
 	};
 
 	struct GraphicsState {
@@ -161,12 +158,9 @@ private:
 	int16 getMaximumScreenWidth() const { return 320; /*640;*/ }
 	int16 getMaximumScreenHeight() const { return 200; /*480;*/ }
 
-	template <bool directRendering>
 	bool updateScreenInternal(const Graphics::Surface &srcSurface);
 
-	void copyRectToScreenInternal(const void *buf, int pitch, int x, int y, int w, int h, const Graphics::PixelFormat &format, bool directRendering, bool tripleBuffer);
-
-	bool isOverlayDirectRendering() const;
+	void copyRectToScreenInternal(const void *buf, int pitch, int x, int y, int w, int h, const Graphics::PixelFormat &format);
 
 	virtual void copyRectToSurface(Graphics::Surface &dstSurface, const Graphics::Surface &srcSurface, int destX, int destY, const Common::Rect &subRect) const {
 		dstSurface.copyRectToSurface(srcSurface, destX, destY, subRect);
@@ -224,7 +218,7 @@ private:
 		~Screen();
 
 		void reset(int width, int height);
-		void addDirtyRect(const Graphics::Surface &srcSurface, const Common::Rect &rect, bool directRendering);
+		void addDirtyRect(const Graphics::Surface &srcSurface, const Common::Rect &rect);
 		void clearDirtyRects() {
 			dirtyRects.clear();
 			fullRedraw = false;
