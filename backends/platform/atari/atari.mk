@@ -17,6 +17,12 @@ FB_DATA		:= ${FB_DIR}
 FB_DOCS		:= ${FB_DIR}/doc
 FB_THEMES	:= ${FB_DIR}
 
+RAVEN_DIR		:= scummvm-${VERSION}-raven
+RAVEN_DATA		:= ${RAVEN_DIR}
+RAVEN_DOCS		:= ${RAVEN_DIR}/doc
+RAVEN_THEMES	:=
+
+
 atarilitedist: $(EXECUTABLE) plugins
 	$(RM_REC) ${LITE_DIR}
 	$(MKDIR) ${LITE_DIR}
@@ -152,4 +158,43 @@ endif
 ifeq ($(CREATE_ZIP),y)
 	$(RM) ../${FB_DIR}.zip
 	$(ZIP) -r -9 ../${FB_DIR}.zip ${FB_DIR}
+endif
+
+
+ravendist: $(EXECUTABLE) plugins
+	$(RM_REC) ${RAVEN_DIR}
+	$(MKDIR) ${RAVEN_DIR}
+
+	$(CP) $(EXECUTABLE) ${RAVEN_DIR}
+	$(NM) -C ${RAVEN_DIR}/$(EXECUTABLE) | grep -vF ' .L' | grep ' [TtWV] ' | $(CXXFILT) | sort -u > ${RAVEN_DIR}/scummvm.sym
+	$(STRIP) -s ${RAVEN_DIR}/$(EXECUTABLE)
+
+ifneq ($(PLUGINS),)
+	$(MKDIR) ${RAVEN_DIR}/plugins
+	$(CP) $(PLUGINS) ${RAVEN_DIR}/plugins
+	$(STRIP) --strip-debug ${RAVEN_DIR}/plugins/*$(PLUGIN_SUFFIX)
+	! [ -f ${RAVEN_DIR}/plugins/detection$(PLUGIN_SUFFIX) ] || mv ${RAVEN_DIR}/plugins/detection$(PLUGIN_SUFFIX) ${RAVEN_DIR}/plugins/detectio$(PLUGIN_SUFFIX)
+endif
+
+	$(MKDIR) ${RAVEN_DOCS}
+	$(CP) $(DIST_FILES_DOCS) ${RAVEN_DOCS}
+
+	$(MKDIR) ${RAVEN_DATA}
+	$(CP) $(DIST_FILES_ENGINEDATA) $(DIST_FILES_ENGINEDATA_BIG) ${RAVEN_DATA}
+
+	# remove unused files
+	$(RM) ${RAVEN_DATA}/helpdialog.zip
+	$(RM) $(addsuffix .dat, $(addprefix ${RAVEN_DATA}/, achievements classicmacfonts encoding macgui))
+
+	# rename remaining files still not fitting into the 8+3 limit (this has to be supported by the backend, too)
+	! [ -f ${RAVEN_DATA}/supernova.dat ] || mv ${RAVEN_DATA}/supernova.dat ${RAVEN_DATA}/supernov.dat
+	! [ -f ${RAVEN_DATA}/teenagent.dat ] || mv ${RAVEN_DATA}/teenagent.dat ${RAVEN_DATA}/teenagen.dat
+
+	# readme.txt
+	$(CP) $(DIST_FILES_PLATFORM) ${RAVEN_DIR}
+	unix2dos ${RAVEN_DIR}/readme.txt
+
+ifeq ($(CREATE_ZIP),y)
+	$(RM) ../${RAVEN_DIR}.zip
+	$(ZIP) -r -9 ../${RAVEN_DIR}.zip ${RAVEN_DIR}
 endif
