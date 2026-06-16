@@ -103,6 +103,12 @@ my_200hz:
  * -----------------------------------------------------------------------*/
 
 	.align 16
+_tcb0_btm:		ds.l 127
+_tcb0_top:		ds.l 1
+_tcb1_btm:		ds.l 127
+_tcb1_top:		ds.l 1
+
+	.align 16
 _thread_func:	dc.l 0
 _sav_sp:		dc.l 0
 _cur_tcb:		dc.b 0
@@ -128,11 +134,11 @@ my_trap4_from_isr:
 	move.l	sp,_sav_sp				/* save ssp */
 	eor.b	#1,_cur_tcb				/* select next thread */
 	beq.b	2f
-	move.l	#_tcb0_top,sp
-	move.l	_tcb1_top,(sp)
+	lea.l	_tcb0_top(pc),sp
+	move.l	_tcb1_top(pc),(sp)
 	bra.b	.save
-2:	move.l	#_tcb1_top,sp
-	move.l	_tcb0_top,(sp)
+2:	lea.l	_tcb1_top(pc),sp
+	move.l	_tcb0_top(pc),(sp)
 
 .save:
 	movem.l	d0-d7/a0-a6,-(sp)		/* cpu */
@@ -203,7 +209,7 @@ SYM(atari_thread_init):
 	move.l	6(sp),_thread_func
 	move.b	#0,_cur_tcb
 
-	move.l	#_tcb1_top,a0			/* init thread1 context */
+	lea.l	_tcb1_top(pc),a0		/* init thread1 context */
 	movem.l	d0-d7/a0-a6,-(a0)		/* cpu */
 	move.l	#_stack1_top,-(a0)		/* usp */
 	moveq	#0,d1					/* fpu */
@@ -276,12 +282,6 @@ SYM(atari_mutex_unlock):
 /*--------------------------------------------------------------------*/
 	.bss
 /*--------------------------------------------------------------------*/
-
-	.align 16
-_tcb0_btm:					ds.l 255
-_tcb0_top:					ds.l 1
-_tcb1_btm:					ds.l 255
-_tcb1_top:					ds.l 1
 
 	.align 16
 _stack1_btm:				ds.l 8191
